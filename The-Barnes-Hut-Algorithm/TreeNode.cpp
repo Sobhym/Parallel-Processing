@@ -1,11 +1,19 @@
+//-------------------------------------------------
+// Parallel Implementation of the Barnes-Hut algorithm using OpenMPI Library
+// Course: 'ECE4530-Parallel Processing' at the University of Manitoba.
+// Implemented by: Micheal Sobhy
+// (The initial code structure and some functions were provided by the course instructor)
+// Email: sobhymich@gmail.com
+//----------------------------------------------------
+
 #include <iostream>
 #include "TreeNode.h"
 #include <math.h>
 #include <cassert>
 
-//Construct a Tree Node 
-//defined by point min and point max 
-//Initialize the tree Node (NULL Children & 0 Bodies)
+//----------------------------------------------------
+//Construct a Tree Node, the domain is defined by the min and max point 
+//----------------------------------------------------
 TreeNode::TreeNode(double x1, double x2, double y1, double y2, double z1, double z2)
 {
     xmin_ = x1;
@@ -14,7 +22,8 @@ TreeNode::TreeNode(double x1, double x2, double y1, double y2, double z1, double
     xmax_ = x2;
     ymax_ = y2;
     zmax_ = z2;
-    
+	
+    //Initialize the tree Node (NULL Children & 0 Bodies)
     number_of_bodies_ = 0;
     for (unsigned int ichild = 0; ichild < 8; ichild++) children_[ichild] = NULL;
 }
@@ -27,8 +36,10 @@ TreeNode::~TreeNode()
         children_[ichild] = NULL;
     }
 }
-//Divde a box to 8 boxes 
-//Set the Children nodes for a given tree node
+
+//----------------------------------------------------
+// Divide a Tree Node domain into 8 sub-domains by creating 8 children nodes
+//----------------------------------------------------
 void TreeNode::spawnChildren()
 {
     double dx = 0.5*(xmax_ - xmin_);
@@ -49,15 +60,19 @@ void TreeNode::spawnChildren()
     children_[6] = new TreeNode(xmin_, xmin_ + dx, ymin_ + dy, ymax_, zmin_ + dz, zmax_);
     children_[7] = new TreeNode(xmin_ + dx, xmax_, ymin_ + dy, ymax_, zmin_ + dz, zmax_);
 }
-//Check if the body belong to this tree node (in the box of the node)
+
+//----------------------------------------------------
+//Check if the body belong to this tree node (in the domain of the node)
+//----------------------------------------------------
 bool TreeNode::containsBody(const body_t& body) const
 {
     if (body.r[0] >= xmin_ && body.r[0] <= xmax_ && body.r[1] >= ymin_ && body.r[1] <= ymax_ && body.r[2] >= zmin_ && body.r[2] <= zmax_) return true;
     return false;
 }
-
-//Function to Add a body to the tree where every tree node contains only one body 
-//Reorder the tree where the bodies are on the leafs and placed in the correct node (box)
+//----------------------------------------------------
+// Add a body to the tree such that every tree leaf contains only one body
+// and the bodies are place in the nodes corresponding to thier domain
+//----------------------------------------------------
 void TreeNode::addBody(const body_t& body)
 {
 	//The node is a leaf & EMPTY (push the body)
@@ -66,7 +81,7 @@ void TreeNode::addBody(const body_t& body)
         body_ = body;
         number_of_bodies_ = 1;
     }
-	//The node is a leaf & CONTAIN a body (create children nodes and push the original and pused body to the new leafs
+	//The node is a leaf & CONTAIN a body (create children nodes and push the original and pushed body to the new leafs
     else if (number_of_bodies_ == 1)
     {
         spawnChildren();
@@ -147,33 +162,14 @@ void TreeNode::prune()
     }
 }
 
-//starting from TREE LEVEL='level' GET maxlevel, nbodies, nnodes (below LEVEL) 
-void TreeNode::diagnostics(int level, int& maxlevel, int& nbodies, int& nnodes) const
-{
-    if (level > maxlevel) maxlevel=level;
-    nnodes++;
-	
-    bool isleaf = true;
-    for (unsigned int ichild = 0; ichild < 8; ichild++)
-    {
-        if (children_[ichild] != NULL)
-        {
-            children_[ichild]->diagnostics(level+1, maxlevel, nbodies, nnodes);
-            isleaf = false;
-        }
-    }
-    if (isleaf)
-    {
-        nbodies+= number_of_bodies_;
-    }
-}
 
 void TreeNode::getCoM(body_t& com) const
 {
     com = com_;
 }
-
-//Calculate the COM for the tree node 
+//----------------------------------------------------
+//Calculate the Center of Mass (COM) for this tree node 
+//----------------------------------------------------
 void TreeNode::computeCoM()
 {
 	//LEAF AND EMPTY (COM.m=0 COM.r = center of the square)
@@ -221,17 +217,25 @@ void TreeNode::computeCoM()
 }
 
 
+//----------------------------------------------------
+// Calculate the force applied on 'body' due to the bodies in this tree node
+//----------------------------------------------------
 void TreeNode::computeForceOnBody(const body_t& body, double theta, double3_t& F) const
 {
-	//NOT A LEAF
+	//----------------------------------------------------
+	// Tree Node is not a leaf.
+	// Check if we can use the COM to calculate the force on the body, 
+	// otherwise calculate the forces using the children tree nodes
+	//----------------------------------------------------
     if (number_of_bodies_ > 1)
     {
-		//Calculate D
+		//Calculate D: This tree node dimension (size of its domain)
 		double D = sqrt((xmax_- xmin_)*(xmax_-xmin_)+(ymax_- ymin_)*(ymax_-ymin_)+(zmax_- zmin_)*(zmax_-zmin_));	
-		//Calculate R
+		//Calculate R: Distance between 'body' and the COM of this tree node
 		double R = sqrt((body.r[0] - com_.r[0])*(body.r[0] - com_.r[0]) + (body.r[1] - com_.r[1])*(body.r[1] - com_.r[1]) + (body.r[2] - com_.r[2])*(body.r[2] - com_.r[2]));
 		
-		//Point is Far enough (use th COM of that node to calculate the force)
+		// Body is far enough from the domain of this tree node
+		// (use th COM of that node to calculate the force)
 		if (D/R<=theta)
 		{
 			if (R > 1e-14)
@@ -242,7 +246,8 @@ void TreeNode::computeForceOnBody(const body_t& body, double theta, double3_t& F
             	F.r[2] -= tmp*(body.r[2] - com_.r[2]);
         	}
 		}
-		//Calculate Forces using the children
+		// Body is not far enough from the domain of this tree node
+		// Calculate the forces using the children tree nodes
 		else
 		{
 			bool all_null = true;
@@ -258,10 +263,14 @@ void TreeNode::computeForceOnBody(const body_t& body, double theta, double3_t& F
 		}
  
     }
-	//LEAF AND CONTAINS A BODY
-    else if (number_of_bodies_ == 1)
+	
+	//----------------------------------------------------
+	// Tree node is a leaf and contains a body.
+	// Calculate the force due to the body in the leaf node.
+	//----------------------------------------------------
+	else if (number_of_bodies_ == 1)
     {
-        //note com is equal to body in this case by our convention.
+        // note com is equal to body in this case by our convention.
         double R = sqrt((body.r[0] - com_.r[0])*(body.r[0] - com_.r[0]) + (body.r[1] - com_.r[1])*(body.r[1] - com_.r[1]) + (body.r[2] - com_.r[2])*(body.r[2] - com_.r[2]));
         
         if (R > 1e-14)
@@ -272,32 +281,50 @@ void TreeNode::computeForceOnBody(const body_t& body, double theta, double3_t& F
             F.r[2] -= tmp*(body.r[2] - com_.r[2]);
         }
     }
-	//LEAF AND EMPTY
+	//----------------------------------------------------
+	// Tree node is a leaf and empty.
+	// No force to be applied on the body.
+	//----------------------------------------------------
     else return;
 }
 
+
+//----------------------------------------------------
+// Each processor needs to have a complete tree, i.e., contains information about bodies 
+// in all domains, to be able to calculate the force due to all the bodies.
+// This function finds the locally essential COMs (or bodies) in my tree required
+// to complete the tree on a processor computing the forces for the bodies in a given domain 
+//----------------------------------------------------
 void TreeNode::LETBodies(const domain_t& domain, double theta, std::vector<body_t>& bodies)
 {
 	int rank, nproc;
     MPI_Comm_rank(MPI_COMM_WORLD,&rank);
     
-	//LEAF AND EMPTY
+	//----------------------------------------------------
+	// Tree node is an empty leaf
+	// No bodies
+	//----------------------------------------------------
     if (number_of_bodies_ == 0) return;
-    //LEAF AND CONTAINS A BODY (PUSH IT)
+	
+	//----------------------------------------------------
+    // Tree node is a leaf and contains a body.
+	// Push the body in the list to be sent to other processor
+	//----------------------------------------------------
 	else if (number_of_bodies_ == 1)
     {
         bodies.push_back(body_);
         return;
     }
     
-	//NOT A LEAF 
-    //no need for an else here as the above conditions return.
+	//----------------------------------------------------
+	// Tree node is not a leaf 
+	// If the domain is far enough push the COM information,
+	// otherwise, check the children tree nodes
+	//----------------------------------------------------
     
-    //------------------------------------------------------------------------
-    //The following code will compute the minimum distance between the current
-    //node and the given domain.
-    //------------------------------------------------------------------------
     
+
+    // Calculate the minimum distance between the current node and the given domain.
     double R2 = 0;
         
     if (domain.max[0] < xmin_) R2 += (domain.max[0] - xmin_)*(domain.max[0] - xmin_);
@@ -310,23 +337,18 @@ void TreeNode::LETBodies(const domain_t& domain, double theta, std::vector<body_
     else if (domain.min[2] > zmax_) R2 += (domain.min[2] - zmax_)*(domain.min[2] - zmax_);
         
     double R = sqrt(R2);
-/*	
-	std::cout<<"I'm rank "<<rank<<" R = "<<R<<std::endl;
-	std::cout<<" domain.max[0] "<<domain.max[0]<<" domain.max[1] "<<domain.max[1]<<" domain.max[2] "<<domain.max[2]<<std::endl;
-	std::cout<<" xmin_ "<<xmin_<<" ymin_ "<<ymin_<<" zmin_ "<<zmin_<<std::endl;
-	std::cout<<" xmax_ "<<xmax_<<" ymax_ "<<ymax_<<" zmax_ "<<zmax_<<std::endl;
-*/
-	//Calculate D
+
+	//Calculate D: This tree node dimension (size of its domain)
 	double D = sqrt((xmax_- xmin_)*(xmax_-xmin_)+(ymax_- ymin_)*(ymax_-ymin_)+(zmax_- zmin_)*(zmax_-zmin_));	
 	
 	if (R!=0)
 	{	
-		//Current TREE NODE is Far enough (use it's COM)
+		// Current tree node is far enough, push the COM in the list to be sent to other processor 
 		if (D/R<=theta)
 		{
 			bodies.push_back(com_);
 		}
-		//Not Far enough check the children
+		// Current tree node is not far enough, check the children tree nodes
 		else
 		{
 			bool all_null = true;
@@ -341,6 +363,7 @@ void TreeNode::LETBodies(const domain_t& domain, double theta, std::vector<body_
 				assert(all_null ==false);
 		}	
 	}
+	// Current tree node is so close, add the bodies in the children tree nodes
 	else
 	{
 		bool all_null = true;

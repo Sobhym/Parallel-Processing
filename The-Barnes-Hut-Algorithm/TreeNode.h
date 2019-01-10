@@ -1,3 +1,11 @@
+//-------------------------------------------------
+// Parallel Implementation of the Barnes-Hut algorithm using OpenMPI Library
+// Course: 'ECE4530-Parallel Processing' at the University of Manitoba.
+// Implemented by: Micheal Sobhy
+// (The initial code structure and some functions were provided by the course instructor)
+// Email: sobhymich@gmail.com
+//----------------------------------------------------
+
 #ifndef _TREENODE_H_
 #define _TREENODE_H_
 

@@ -1,3 +1,11 @@
+//-------------------------------------------------
+// Parallel Implementation of the Barnes-Hut algorithm using OpenMPI Library
+// Course: 'ECE4530-Parallel Processing' at the University of Manitoba.
+// Implemented by: Micheal Sobhy
+// (The initial code structure and some functions were provided by the course instructor)
+// Email: sobhymich@gmail.com
+//----------------------------------------------------
+
 #ifndef _UTILITIES_H_
 #define _UTILITIES_H_
 
@@ -25,7 +33,7 @@ typedef struct
 body_t;
 
 //--------------------------------------------
-// A 3D Domain (lower-left) to upper-right
+// A 3D Domain lower-left to upper-right
 //--------------------------------------------
 typedef struct
 {
@@ -33,6 +41,24 @@ typedef struct
     double max[3];
 }
 domain_t;
+
+//-----------------------------------------------------
+// Orthogonal Recursive Bisection (ORB) Domains
+//-----------------------------------------------------
+typedef struct
+{
+	//bodies in the domain
+	std::vector<body_t> bodies;
+	//ID of the bodies in the domain
+	std::vector<int> pids;
+	//Weight of the domain
+	double W;
+	//Dimension used in partitioning to obtain this domain
+	int Dim;
+	
+	
+}
+Domain;
 
 void ORB(int P, const std::vector<body_t>& points, std::vector<std::vector<int> >& points_in_orb_domains);
 void parallelRange(int globalstart, int globalstop, int irank, int nproc, int& localstart, int& localstop, int& localcount);

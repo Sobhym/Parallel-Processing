@@ -1,3 +1,11 @@
+//-------------------------------------------------
+// Parallel Implementation of the Barnes-Hut algorithm using OpenMPI Library
+// Course: 'ECE4530-Parallel Processing' at the University of Manitoba.
+// Implemented by: Micheal Sobhy
+// (The initial code structure and some functions were provided by the course instructor)
+// Email: sobhymich@gmail.com
+//----------------------------------------------------
+
 #include <vector>
 #include <math.h>
 #include <cassert>
@@ -7,48 +15,6 @@
 #include <algorithm>
 
 using namespace std;
-
-//-----------------------------------------------------
-// Usual Parallel Partitioning Code
-//-----------------------------------------------------
-void parallelRange(int globalstart, int globalstop, int irank, int nproc, int& localstart, int& localstop, int& localcount)
-{
-	int nvals = globalstop - globalstart + 1;
-	int divisor = nvals/nproc;
-	int remainder = nvals%nproc;
-	int offset;
-	if (irank < remainder) offset = irank;
-	else offset = remainder;
-    
-	localstart = irank*divisor + globalstart + offset;
-	localstop = localstart + divisor - 1;
-	if (remainder > irank) localstop += 1;
-	localcount = localstop - localstart + 1;
-}
-/*
-//-----------------------------------------------------
-// Parallel bucket sort. Given a list of values,
-// produce a sorted list across all processors. Note
-// that sorted values does not contain the same values
-// as values to sort but represents a portion of the
-// global sorted list
-//-----------------------------------------------------
-void parallelBucketSort(const std::vector<double>& values_to_sort, std::vector<double>& sorted_values)
-{
-    
-}
-
-
-//-----------------------------------------------------
-// For a given list of bodies, compute P ORB domains
-// and return a list of indexes into the list of bodies
-// tagging a body to a given domain
-//-----------------------------------------------------
-void ORB(int P, const std::vector<body_t>& points, std::vector<std::vector<int> >& points_in_orb_domains)
-{
-    
-}
-*/
 
 //-----------------------------------------------------
 // For a list of bodies, compute the domain that
@@ -124,66 +90,32 @@ void getPointExtent(const std::vector<body_t>& bodies, domain_t& domain, double&
 //-----------------------------------------------------
 // Extract a single coordinate list from a body_t list
 //-----------------------------------------------------
-std::vector<double> getSingleCoordinateListFromBodies(const std::vector<body_t>& points, int dim)
+std::vector<double> getSingleCoordinateListFromBodies(const std::vector<body_t>& bodies, int dim)
 {
-    std::vector<double> coordinate_list(points.size());
+    std::vector<double> coordinate_list(bodies.size());
     if (dim > 3 || dim < 0)
     {
         std::cerr << "Requested dimension " << dim << " is out of bounds at line " << __LINE__ << " of file " << __FILE__ << " for function " << __FUNCTION__ << std::endl;
         return coordinate_list;
     }
     
-    for (unsigned int ipoint = 0; ipoint < points.size(); ipoint++)
+    for (unsigned int ipoint = 0; ipoint < bodies.size(); ipoint++)
     {
-        coordinate_list[ipoint] = points[ipoint].r[dim];
+        coordinate_list[ipoint] = bodies[ipoint].r[dim];
     }
     
-    //Want to see the list?
-    /*
-    for (unsigned int ipoint = 0; ipoint < coordinate_list.size(); ipoint++)
-    {
-        std::cout << coordinate_list[ipoint] << std::endl;
-    }
-    
-    return coordinate_list;
-	*/
 }
 
 
-
-// Struct that contains the Domains to be partitioned
-typedef struct
-{
-	//points in the domain
-	std::vector<body_t> points;
-	//ID of the points in the domain
-	std::vector<int> pids;
-	//Weight of the domain
-	double W;
-	//Dimension used in partitioning to obtain this domain
-	int Dim; //Dimension used 
-	
-	
-}
-Domain;
-
-
 //-----------------------------------------------------
-// Implementation of ORB.
-//
-// Inputs:
-//
-// P the number of domains to produce.
-//
-// points a list of type double3_t to partition.
-//
-// Output:
-// points_in_orb_domains is a vector of vectors where
-// points_in_orb_domains[iproc] stores the local element
-// indexes of all processors in subdomain iproc (i.e.,
-// destined for iproc).
+// For a list of bodies, partition them into 'P' orthogonal 
+// domains using Orthogonal Recursive Bisection (ORB)
+// partitioning method.
+// Return the paritioned bodies in 'bodies_in_orb_domains' vector of vectors,
+// where bodies_in_orb_domains[iproc] stores the local element
+// indeces of all processors in subdomain iproc (i.e., destined for iproc).
 //-----------------------------------------------------
-void ORB(int P, const std::vector<body_t>& points, std::vector<std::vector<int> >& points_in_orb_domains)
+void ORB(int P, const std::vector<body_t>& bodies, std::vector<std::vector<int> >& bodies_in_orb_domains)
 {
 	
     int rank, nproc;
@@ -191,16 +123,16 @@ void ORB(int P, const std::vector<body_t>& points, std::vector<std::vector<int> 
     MPI_Comm_rank(MPI_COMM_WORLD,&rank);
 	//Queue of Domains to be partittioned 
     std::queue<Domain> Domains;
-	//DI: initial domain (contain the points first read on the processor)
+	//DI: initial domain (contain the bodies first read on the processor)
 	//D0: Domain to be partitioned 
-	//D_L: Domain of points before the weighted median
-	//D_R: Domain of points after the weighted medain
+	//D_L: Domain of bodies before the weighted median
+	//D_R: Domain of bodies after the weighted medain
 	Domain DI,D0,D_L,D_R;
-	//list and sorted list of a certain Coordinate for the points in the domain
+	//list and sorted list of a certain Coordinate for the bodies in the domain
 	std::vector <double> list,sorted_list;
 	
 	//W_L,W_R new weights for the left and right domain
-	//W_median: position of the wighted median with respect to the points on all domains
+	//W_median: position of the wighted median with respect to the bodies on all domains
 	//W_median_proc, W_median_proc_index: the processor where the W_median exist and it's index
 	//dim: Coordinate to be used for division
 	//SL_size: size of the sorted list on each processor
@@ -214,14 +146,14 @@ void ORB(int P, const std::vector<body_t>& points, std::vector<std::vector<int> 
 	//cuttoffs: Array for the values of cutoff on all processors (last element in the array is the sum of number of elements on all processors)
 	int All_SL_sizes[nproc],cutoffs[nproc+1];
 	
-	//Set ids for the points in the initail domain
-	DI.pids.resize(points.size());
-	for(int i=0;i<points.size();i++) {DI.pids[i]=i;}	
+	//Set ids for the bodies in the initail domain
+	DI.pids.resize(bodies.size());
+	for(int i=0;i<bodies.size();i++) {DI.pids[i]=i;}	
 	
-	//Set initial coordinate, weight, and points
+	//Set initial coordinate, weight, and bodies
 	DI.Dim=0;	//Dims	0 1 2	
 	DI.W=P;
-	DI.points=points;
+	DI.bodies=bodies;
 	//Push the initail domain to the queue
 	Domains.push(DI);
 	
@@ -236,10 +168,10 @@ void ORB(int P, const std::vector<body_t>& points, std::vector<std::vector<int> 
 		//return to first dim (0) if we passed dim(2)
 		if (dim>2) {dim=0;}
 		
-		//Get the list of points based on dim and sort them
+		//Get the list of bodies based on dim and sort them
 		list.resize(0);
 		sorted_list.resize(0);
-		list=getSingleCoordinateListFromBodies(D0.points,dim);
+		list=getSingleCoordinateListFromBodies(D0.bodies,dim);
 		parallelBucketSort(list,sorted_list);
 		
 		//Calculate new weights (L,R)
@@ -325,41 +257,41 @@ void ORB(int P, const std::vector<body_t>& points, std::vector<std::vector<int> 
 	
 	//---------FOR ALL PROCESSORS-----------//
 	//Now all processors Hit this point with the value of the weighted median 
-	//I need to divide the points to two domains then push the point to the queue
+	//I need to divide the bodies to two domains then push the point to the queue
 		
 	//if R is true push the element on the W_median to the right (First W_median belong to the right domain)
 	bool R=true;
 		
 		
-	for (int i=0;i<D0.points.size();i++)
+	for (int i=0;i<D0.bodies.size();i++)
 	{
 		//Elements on the W_median push one to the left and one to the right 
 		if (list[i]==W_median_val)
 		{
 			if (R)
 			{
-				D_R.points.push_back(D0.points[i]);
+				D_R.bodies.push_back(D0.bodies[i]);
 				D_R.pids.push_back(D0.pids[i]);
 			}
 			else
 			{
-				D_L.points.push_back(D0.points[i]);
+				D_L.bodies.push_back(D0.bodies[i]);
 				D_L.pids.push_back(D0.pids[i]);
 			}
 			R=!R;
 		
 		}
 		
-		//Put points before the W_median to the left domain
+		//Put bodies before the W_median to the left domain
 		else if (list[i]<W_median_val)
 		{
-			D_L.points.push_back(D0.points[i]);
+			D_L.bodies.push_back(D0.bodies[i]);
 			D_L.pids.push_back(D0.pids[i]);
 		}
-		//Put points after the W_median to the right domain
+		//Put bodies after the W_median to the right domain
 		else
 		{
-			D_R.points.push_back(D0.points[i]);
+			D_R.bodies.push_back(D0.bodies[i]);
 			D_R.pids.push_back(D0.pids[i]);
 		}
 	}
@@ -375,26 +307,26 @@ void ORB(int P, const std::vector<body_t>& points, std::vector<std::vector<int> 
 	{
 		Domains.push(D_L);
 	}
-	// no more partitioning required store the ids for this domain in points_in_orb_domains
+	// no more partitioning required store the ids for this domain in bodies_in_orb_domains
 	else
 	{
-		points_in_orb_domains.push_back(D_L.pids);
+		bodies_in_orb_domains.push_back(D_L.pids);
 	}
 	//If the weight of the right domain is more than one push to queue in order to be repartitioned 
 	if (W_R>1)
 	{
 		Domains.push(D_R);
 	}
-	// no more partitioning required store the ids for this domain in points_in_orb_domains
+	// no more partitioning required store the ids for this domain in bodies_in_orb_domains
 	else
 	{
-		points_in_orb_domains.push_back(D_R.pids);
+		bodies_in_orb_domains.push_back(D_R.pids);
 	}
 	
 	//Resize to zero to be reused
-	D_L.points.resize(0);
+	D_L.bodies.resize(0);
 	D_L.pids.resize(0);
-	D_R.points.resize(0);
+	D_R.bodies.resize(0);
 	D_R.pids.resize(0);
 		
 	}
@@ -403,15 +335,13 @@ void ORB(int P, const std::vector<body_t>& points, std::vector<std::vector<int> 
 
 
 //-----------------------------------------------------
-// Implementation of Parallel Bucket Sort.
+// Parallel approach for Bucket Sort.
 //
-// Inputs:
+// Inputs: The values to sort on each processor
 //
-// The values to sort.
+// Outputs: A subset of the sorted values. 
 //
-// Outputs:
-//
-// A subset of the sorted values. Note that the entries
+// Note that the entries
 // in sorted values are not the same as values to sort
 // on any given processor. They are a subset of the
 // total set of sorted values where rank 0 will contain
